@@ -1,0 +1,11 @@
+# Database Configuration (Oracle)
+# Formato TNS da string de conexão Oracle
+DB_DIALECT=oracle
+DB_USER=STAGE
+DB_PASSWD=your_password_here
+DB_SCHEMA=STAGE
+DB_CONNECTSTRING=(description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=your_host_here))(connect_data=(service_name=your_service_name_here))(security=(ssl_server_dn_match=no)))
+
+# RabbitMQ Configuration
+ENV_RABBITMQ=amqp://guest:guest@localhost:5672/
+QUEUE_NAME=integracao
