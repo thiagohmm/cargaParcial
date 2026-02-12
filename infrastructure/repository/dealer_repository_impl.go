@@ -10,22 +10,30 @@ import (
 
 // DealerRepositoryImpl implementa o DealerRepository
 type DealerRepositoryImpl struct {
-	db *sql.DB
+	db            *sql.DB
+	stmtGetByIBM  *sql.Stmt
 }
 
 // NewDealerRepository cria uma nova instância do repositório
 func NewDealerRepository(db *sql.DB) repositories.DealerRepository {
-	return &DealerRepositoryImpl{
+	repo := &DealerRepositoryImpl{
 		db: db,
 	}
+	
+	// Pré-compilar query de busca por IBM
+	var err error
+	repo.stmtGetByIBM, err = db.Prepare(`SELECT IdRevendedor, CodigoIBM FROM Revendedor WHERE CodigoIBM = :1`)
+	if err != nil {
+		panic(fmt.Sprintf("Erro ao preparar statement GetByIBM: %v", err))
+	}
+	
+	return repo
 }
 
 // GetByIBM busca um revendedor pelo código IBM
 func (r *DealerRepositoryImpl) GetByIBM(ibm string) (*entities.Dealer, error) {
-	query := `SELECT IdRevendedor, CodigoIBM FROM Revendedor WHERE CodigoIBM = :1`
-
 	var dealer entities.Dealer
-	err := r.db.QueryRow(query, ibm).Scan(&dealer.ID, &dealer.IBM)
+	err := r.stmtGetByIBM.QueryRow(ibm).Scan(&dealer.ID, &dealer.IBM)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("revendedor não encontrado para IBM: %s", ibm)

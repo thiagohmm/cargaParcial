@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"fmt"
 	"log"
 	"runtime"
 	"sync"
@@ -29,6 +30,11 @@ type ProcessProductsUseCase struct {
 	maxWorkers             int
 	dealerCache            map[string]*entities.Dealer // Cache de dealers
 	dealerCacheMutex       sync.RWMutex                // Mutex para acesso seguro ao cache
+	
+	// Batch processing
+	batchProductDealers      []*entities.ProductDealer
+	batchProductDealersMutex sync.Mutex
+	batchSize                int
 }
 
 // NewProcessProductsUseCase cria uma nova instância do use case
@@ -54,6 +60,8 @@ func NewProcessProductsUseCase(
 		queueService:           queueService,
 		maxWorkers:             maxWorkers,
 		dealerCache:            make(map[string]*entities.Dealer),
+		batchProductDealers:    make([]*entities.ProductDealer, 0, 500),
+		batchSize:              100, // Flush a cada 100 items
 	}
 }
 
@@ -211,6 +219,11 @@ func (uc *ProcessProductsUseCase) Execute(input dto.ProcessProductsInput) (*dto.
 	log.Printf("Processamento concluído: %d jobs processados", totalJobs)
 	log.Printf("Sucessos: %d, Falhas: %d", len(output.SuccessList), len(output.FailureList))
 
+	// Flush final do batch de ProductDealers
+	if err := uc.flushProductDealerBatch(); err != nil {
+		log.Printf("Erro ao fazer flush final do batch: %v", err)
+	}
+
 	// Enviar mensagem "mover" para a fila "integracao"
 	if err := uc.queueService.Send("mover"); err != nil {
 		log.Printf("Erro ao enviar mensagem para fila: %v", err)
@@ -275,7 +288,7 @@ func (uc *ProcessProductsUseCase) processProduct(dealer *entities.Dealer, produc
 		}
 	}
 
-	// Criar relação se não existir
+	// Criar relação se não existir - usando BATCH
 	if !exists {
 		productDealer := &entities.ProductDealer{
 			ProductID: productID,
@@ -283,13 +296,14 @@ func (uc *ProcessProductsUseCase) processProduct(dealer *entities.Dealer, produc
 			IsActive:  true,
 		}
 
-		if err := uc.productDealerRepo.Create(productDealer); err != nil {
-			log.Printf("Erro ao criar ProductDealer: %v", err)
+		// Adiciona ao batch (faz flush automático se necessário)
+		if err := uc.addToProductDealerBatch(productDealer); err != nil {
+			log.Printf("Erro ao adicionar ProductDealer ao batch: %v", err)
 			return dto.ProductResultDTO{
 				DealerID:  &dealerID,
 				ProductID: &productID,
 				Status:    "fail",
-				Reason:    "Erro ao criar relação produto-revendedor",
+				Reason:    "Erro ao criar relação produto-revendedor (batch)",
 			}
 		}
 	}
@@ -333,4 +347,46 @@ func (uc *ProcessProductsUseCase) processProduct(dealer *entities.Dealer, produc
 		Status:    "fail",
 		Reason:    "Registro não encontrado após chamada da procedure",
 	}
+}
+
+// addToProductDealerBatch adiciona um ProductDealer ao batch e faz flush se necessário
+func (uc *ProcessProductsUseCase) addToProductDealerBatch(productDealer *entities.ProductDealer) error {
+	uc.batchProductDealersMutex.Lock()
+	defer uc.batchProductDealersMutex.Unlock()
+
+	uc.batchProductDealers = append(uc.batchProductDealers, productDealer)
+
+	// Se atingiu o tamanho do batch, faz o flush
+	if len(uc.batchProductDealers) >= uc.batchSize {
+		return uc.flushProductDealerBatchUnsafe()
+	}
+
+	return nil
+}
+
+// flushProductDealerBatch faz o flush do batch com lock
+func (uc *ProcessProductsUseCase) flushProductDealerBatch() error {
+	uc.batchProductDealersMutex.Lock()
+	defer uc.batchProductDealersMutex.Unlock()
+
+	return uc.flushProductDealerBatchUnsafe()
+}
+
+// flushProductDealerBatchUnsafe faz o flush sem lock (deve ser chamado com lock já adquirido)
+func (uc *ProcessProductsUseCase) flushProductDealerBatchUnsafe() error {
+	if len(uc.batchProductDealers) == 0 {
+		return nil
+	}
+
+	log.Printf("🚀 Fazendo batch insert de %d ProductDealers", len(uc.batchProductDealers))
+
+	err := uc.productDealerRepo.CreateBatch(uc.batchProductDealers)
+	if err != nil {
+		return fmt.Errorf("erro ao criar batch de ProductDealers: %w", err)
+	}
+
+	// Limpar o batch
+	uc.batchProductDealers = uc.batchProductDealers[:0]
+
+	return nil
 }

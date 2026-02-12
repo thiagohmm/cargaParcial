@@ -6,4 +6,5 @@ import "github.thiagohmm.com.br/cargaparcial/domain/entities"
 type ProductDealerRepository interface {
 	Exists(productID, dealerID int) (bool, error)
 	Create(productDealer *entities.ProductDealer) error
+	CreateBatch(productDealers []*entities.ProductDealer) error
 }

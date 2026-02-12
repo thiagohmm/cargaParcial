@@ -10,26 +10,34 @@ import (
 
 // ProductIntegrationStagingRepositoryImpl implementa o ProductIntegrationStagingRepository
 type ProductIntegrationStagingRepositoryImpl struct {
-	db *sql.DB
+	db                         *sql.DB
+	stmtGetByProductAndDealer  *sql.Stmt
 }
 
 // NewProductIntegrationStagingRepository cria uma nova instância do repositório
 func NewProductIntegrationStagingRepository(db *sql.DB) repositories.ProductIntegrationStagingRepository {
-	return &ProductIntegrationStagingRepositoryImpl{
+	repo := &ProductIntegrationStagingRepositoryImpl{
 		db: db,
 	}
+	
+	// Pré-compilar query de busca
+	var err error
+	repo.stmtGetByProductAndDealer, err = db.Prepare(`
+		SELECT IdProduto, IdRevendedor 
+		FROM IntegracaoProdutoStaging 
+		WHERE IdProduto = :1 AND IdRevendedor = :2
+	`)
+	if err != nil {
+		panic(fmt.Sprintf("Erro ao preparar statement GetByProductAndDealer: %v", err))
+	}
+	
+	return repo
 }
 
 // GetByProductAndDealer busca um registro de integração por produto e revendedor
 func (r *ProductIntegrationStagingRepositoryImpl) GetByProductAndDealer(productID, dealerID int) (*entities.ProductIntegrationStaging, error) {
-	query := `
-		SELECT IdProduto, IdRevendedor 
-		FROM IntegracaoProdutoStaging 
-		WHERE IdProduto = :1 AND IdRevendedor = :2
-	`
-
 	var staging entities.ProductIntegrationStaging
-	err := r.db.QueryRow(query, productID, dealerID).Scan(&staging.ProductID, &staging.DealerID)
+	err := r.stmtGetByProductAndDealer.QueryRow(productID, dealerID).Scan(&staging.ProductID, &staging.DealerID)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
